@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang=en>
+	<head>
+		<meta charset=UTF-8>
+		<meta name=viewport content="width=device-width,initial-scale=1">
+		<title>WinRT TTS Server</title>
+		<style>
+			html, body {
+				width: 100%;
+				margin: 0;
+				padding: 0;
+				border: 0;
+			}
+
+			.container {
+				max-width: 800px;
+				margin: auto;
+			}
+
+			#text {
+				width: calc(100% - 10px);
+				height: 10em;
+			}
+
+			#character_selection {
+				margin: 5px 0;
+			}
+		</style>
+	</head>
+	<body>
+		<div class=container>
+			<h1>WinRT TTS Server</h1>
+
+			<div id=character_selection>
+				<select id=character_selector></select>
+				(<span id=character_count>0</span> voices available.)
+			</div>
+			<table>
+				<tr>
+					<td><label for=audio_volume>Audio Volume</label></td>
+					<td><input type=range id=audio_volume min=0.0 max=1.0 step=0.01 value=1.0></td>
+					<td><span id=audio_volume_val>1.00</span></td>
+				</tr>
+				<tr>
+					<td><label for=speaking_rate>Speaking Rate</label></td>
+					<td><input type=range id=speaking_rate min=0.5 max=6.0 step=0.01 value=1.0></td>
+					<td><span id=speaking_rate_val>1.00</span></td>
+				</tr>
+				<tr>
+					<td><label for=audio_pitch>Audio Pitch</label></td>
+					<td><input type=range id=audio_pitch min=0.0 max=2.0 step=0.01 value=1.0></td>
+					<td><span id=audio_pitch_val>1.00</span></td>
+				</tr>
+				<tr>
+					<td></td>
+					<td><button id=reset>Reset Parameter</button></td>
+				</tr>
+			</table>
+
+			<textarea id=text placeholder="Text to Synthesis"></textarea>
+			<p>
+				<button id=synthesis_button>Synthesis</button>
+			</p>
+			<audio id=audio controls></audio>
+			<script>
+				let characters;
+				const character_selector = document.getElementById("character_selector");
+				const text = document.getElementById("text");
+				const audio_volume = document.getElementById("audio_volume");
+				const speaking_rate = document.getElementById("speaking_rate");
+				const audio_pitch = document.getElementById("audio_pitch");
+
+				const fmt_float = v => {
+					v += "";
+
+					const parts = v.split(".");
+
+					if (parts.length == 1)
+						parts.push("");
+
+					while (parts[1].length < 2)
+						parts[1] += "0";
+
+					return parts.join(".");
+				};
+
+				const update_values = () => {
+					document.getElementById("audio_volume_val").textContent = fmt_float(audio_volume.value);
+					document.getElementById("speaking_rate_val").textContent = fmt_float(speaking_rate.value);
+					document.getElementById("audio_pitch_val").textContent = fmt_float(audio_pitch.value);
+				};
+
+				audio_volume.addEventListener("input", update_values);
+				speaking_rate.addEventListener("input", update_values);
+				audio_pitch.addEventListener("input", update_values);
+
+				document.getElementById("reset").addEventListener("click", () => {
+					audio_volume.value = 1.0;
+					speaking_rate.value = 1.0;
+					audio_pitch.value = 1.0;
+					update_values();
+				});
+
+				update_values();
+
+				fetch("/api/voices")
+					.then(resp => resp.json())
+					.then(characters_ => {
+						characters = characters_;
+
+						for (character of characters) {
+							const option = document.createElement("option");
+							option.textContent = `${character.display_name} (${character.language})`;
+							option.value = character.id;
+							character_selector.appendChild(option);
+						}
+
+						document.getElementById("character_count").textContent = characters.length;
+					});
+
+				document.getElementById("synthesis_button").addEventListener("click", async () => {
+					const request_body = JSON.stringify({
+						voice_id: character_selector.value,
+						text: text.value,
+						audio_volume: audio_volume.value - 0,
+						speaking_rate: speaking_rate.value - 0,
+						audio_pitch: audio_pitch.value - 0,
+					});
+
+					const response = await fetch("/api/tts", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: request_body,
+					});
+
+					if (response.status != 200) {
+						alert(response.status + " " + response.statusText + "\n" + await response.text());
+						return;
+					}
+
+					const raw_wav = new Uint8Array(await response.arrayBuffer());
+					const audio = document.getElementById("audio");
+					audio.src = `data:audio/wav;base64,${raw_wav.toBase64()}`;
+					audio.play();
+				});
+			</script>
+		</div>
+	</body>
+</html>
