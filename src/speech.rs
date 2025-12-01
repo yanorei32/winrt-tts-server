@@ -45,8 +45,14 @@ pub fn voices() -> &'static [Voice] {
 
 #[derive(Error, Debug)]
 pub enum SynthesisError {
+    #[error("Failed to call AllVoices: {0}")]
+    AllVoices(windows_result::Error),
+
     #[error("Failed to lookup voice")]
     LookupVoice,
+
+    #[error("Failed to SetVoice: {0}")]
+    SetVoice(windows_result::Error),
 
     #[error("Failed to initialize SpeechSynthesizer: {0}")]
     InitializeSpeechSynthesizer(windows_result::Error),
@@ -88,9 +94,11 @@ pub enum SynthesisError {
 impl SynthesisError {
     pub fn is_client_error(&self) -> bool {
         match self {
+            SynthesisError::AllVoices(_) => false,
             SynthesisError::LookupVoice => true,
             SynthesisError::InitializeSpeechSynthesizer(_) => false,
             SynthesisError::GetOptionsInstance(_) => false,
+            SynthesisError::SetVoice(_) => false,
             SynthesisError::SetProperty {
                 property: _,
                 error: _,
@@ -110,15 +118,16 @@ impl SynthesisError {
 pub async fn synthesis(req: &ApiRequest) -> Result<Vec<u8>, SynthesisError> {
     let start_at = std::time::Instant::now();
 
-    let voice = VOICES
-        .get()
-        .unwrap()
-        .iter()
-        .find(|voice| voice.id == req.voice_id)
+    let voice = SpeechSynthesizer::AllVoices()
+        .map_err(SynthesisError::AllVoices)?
+        .into_iter()
+        .find(|voice| voice.Id().is_ok_and(|id| id.to_string() == req.voice_id))
         .ok_or(SynthesisError::LookupVoice)?;
 
     let synthesizer =
         SpeechSynthesizer::new().map_err(SynthesisError::InitializeSpeechSynthesizer)?;
+
+    synthesizer.SetVoice(&voice).map_err(SynthesisError::SetVoice)?;
 
     let options = synthesizer
         .Options()
@@ -145,7 +154,7 @@ pub async fn synthesis(req: &ApiRequest) -> Result<Vec<u8>, SynthesisError> {
             error,
         })?;
 
-    let ssml = ssml::speak(Some(&voice.language), [&req.text])
+    let ssml = ssml::speak(Some(&voice.Language().unwrap().to_string()), [&req.text])
         .serialize_to_string(&ssml::SerializeOptions::default())
         .map_err(SynthesisError::SSMLError)?;
 
